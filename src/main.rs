@@ -70,10 +70,10 @@ fn main() {
 
 
     let session_start_time = Instant::now();
-    // TODO: get time remaining in session
+    // TODO: get time remaining in session from service
     let session_duration = Duration::from_secs(60 * 15);  // 15 minutes
 
-    // TODO: power on payload
+    // TODO: power on payload (not implemented by ws yet)
 
     // wait for payload to be ready
     let initialised = wait_for_message(
@@ -100,7 +100,7 @@ fn main() {
     );
 
     // send payload the startup command
-    // TODO: get startup command somehow
+    // TODO: get startup command from service
     let startup_command = "patch01.json".as_bytes().to_vec();
     send_message_with_acknowledgment(
         || Command::startup_command(startup_command.clone()),
@@ -129,5 +129,5 @@ fn main() {
     // give payload time to shutdown
     thread::sleep(SHUTDOWN_ALLOWANCE)
 
-    // TODO: power off payload
+    // TODO: power off payload (not implemented by ws yet)
 }
