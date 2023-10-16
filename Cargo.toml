@@ -7,4 +7,11 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4.26"
-ws-api = { git = "ssh://git@github.com/spiralblue/ws-api.git", version = "0.1.0" }
+# ws-api = { git = "ssh://git@github.com/spiralblue/ws-api.git", version = "0.1.0" }
+ws-api = { path = "../ws-api" }
+# cubeos-service = { git = "ssh://git@github.com/Cube-OS/cubeos-service", features = ["app"]}
+cubeos-service = { path = "../../cubeos-service", features = ["app"]}
+gpio = "0.4"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+isis-eps-api = { path = "../../isis-eps-api" }

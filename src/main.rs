@@ -1,133 +1,113 @@
+mod eps;
+
 use std::thread;
 use std::time::{Duration, Instant};
 use chrono::prelude::*;
-use ws_api::{Command, CommandType};
+use ws_api::{Command as SBCommand, CommandType};
+use cubeos_service::*;
+use log::{error, info, warn};
+use gpio::GpioOut;
+use gpio::sysfs::SysFsGpioOutput;
+use std::str::FromStr;
+use crate::eps::Eps;
+use isis_eps_api::PIUHkSel;
 
-const POWER_UP_ALLOWANCE: Duration = Duration::from_secs(60 * 5);
-const ACKNOWLEDGE_MESSAGE_TIMEOUT: Duration = Duration::from_secs(60 * 1);
-const ACKNOWLEDGE_MESSAGE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(1);
-const SHUTDOWN_ALLOWANCE: Duration = Duration::from_secs(30);
+// const POWER_UP_ALLOWANCE: Duration = Duration::from_secs(60 * 5);
+// const ACKNOWLEDGE_MESSAGE_TIMEOUT: Duration = Duration::from_secs(60 * 1);
+// const ACKNOWLEDGE_MESSAGE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(1);
+const SHUTDOWN_ALLOWANCE: Duration = Duration::from_secs(45);
 
-
-fn send_message(command: Command) {
-    // TODO: use service to send message
-    println!("Sent a message.");
-}
-
-fn receive_message() -> Command {
-    // TODO: use service to receive message
-    return Command::simple_command(CommandType::Initialised);
-}
-
-fn wait_for_message(
-    message_type: CommandType,
-    queue: &mut Vec<Command>,
-    timeout: Duration,
-) -> Option<Command> {
-    let start_time = Instant::now();
-    if let Some(index) = queue.iter().position(|x| x.command_type == message_type) {
-        return Some(queue.remove(index));
-    }
-    loop {
-        if start_time.elapsed() > timeout {
-            return None;
-        }
-        let message = receive_message();
-        if message.command_type == message_type {
-            return Some(message);
-        } else {
-            queue.push(message);
-        }
+app_macro! {
+    spiral_blue:SpiralBlue{ 
+        mutation: Initialised => fn initialised(&self) -> Result<()>;
+        mutation: Time => fn time(&self) -> Result<()>;
+        mutation: StartupCommand => fn startup_command(&self, cmd: Vec<u8>) -> Result<()>;
+        mutation: Shutdown => fn shutdown(&self, time_remaining_s: u16) -> Result<()>;
+        mutation: Ftp => fn ftp(&self) -> Result<()>;
     }
 }
 
-fn send_message_with_acknowledgment(
-    message_func: impl Fn() -> Command,
-    expected_acknowledgment_type: CommandType,
-    queue: &mut Vec<Command>,
-    timeout: Duration,
-) -> Command {
-    let start_time = Instant::now();
-    loop {
-        if start_time.elapsed() > timeout {
-            panic!("Did not receive acknowledgment in time");
-        }
-        let message = message_func();
-        send_message(message);
-        if let Some(acknowledgment) = wait_for_message(
-            expected_acknowledgment_type,
-            queue,
-            ACKNOWLEDGE_MESSAGE_ATTEMPT_TIMEOUT,
-        ) {
-            return acknowledgment;
-        }
-    }
-}
-
-
-fn main() {
-    let mut message_queue = vec![];
-
-
+fn app_logic() -> Result<()> {
     let session_start_time = Instant::now();
     // TODO: get time remaining in session from service
     let session_duration = Duration::from_secs(60 * 15);  // 15 minutes
-
-    // TODO: power on payload (not implemented by ws yet)
-
+    
     // wait for payload to be ready
-    let initialised = wait_for_message(
-        CommandType::Initialised, &mut message_queue, POWER_UP_ALLOWANCE,
-    );
-    if initialised.is_some() {
-        send_message(
-            Command::simple_command(CommandType::InitialisedAcknowledge)
-        );
-    } else {
-        panic!("Payload did not initialise in time");
+    match SpiralBlue::initialised() {
+        Ok(()) => {
+            info!("Initialised");
+        }
+        Err(e) => {
+            error!("Error: {:?}", e);
+        }
     }
 
     // send payload the current time
-    let time_func = || {
-        let current_time = Utc::now();
-        Command::time(current_time)
-    };
-    send_message_with_acknowledgment(
-        time_func,
-        CommandType::TimeAcknowledge,
-        &mut message_queue,
-        ACKNOWLEDGE_MESSAGE_TIMEOUT,
-    );
+    match SpiralBlue::time() {
+        Ok(()) => {
+            info!("Time updated successfully");
+        }
+        Err(e) => {
+            error!("Error: {:?}", e);
+        }
+    }
 
     // send payload the startup command
-    // TODO: get startup command from service
     let startup_command = "patch01.json".as_bytes().to_vec();
-    send_message_with_acknowledgment(
-        || Command::startup_command(startup_command.clone()),
-        CommandType::StartupCommandAcknowledge,
-        &mut message_queue,
-        ACKNOWLEDGE_MESSAGE_TIMEOUT,
-    );
+    match SpiralBlue::startup_command(startup_command) {
+        Ok(()) => {
+            info!("Starting operation");
+        }
+        Err(e) => {
+            error!("Error: {:?}", e);
+        }
+    }
 
     // wait for session to finish
-    let time_remaining = session_duration - session_start_time.elapsed();
-    let session_finished = wait_for_message(
-        CommandType::PowerDown, &mut message_queue, time_remaining,
-    );
-    if session_finished.is_some() {
-        send_message(Command::simple_command(CommandType::PowerDownAcknowledge));
-    } else {
-        // terminate session
-        send_message_with_acknowledgment(
-            || Command::simple_command(CommandType::PowerDown),
-            CommandType::PowerDownAcknowledge,
-            &mut message_queue,
-            SHUTDOWN_ALLOWANCE,
-        );
+    let mut batt_low = false;
+    let mut time_remaining = session_duration - session_start_time.elapsed();
+    loop {
+        thread::sleep(Duration::from_secs(1));
+        time_remaining = session_duration - session_start_time.elapsed();
+        batt_low = match Eps::piu_hk(PIUHkSel::PIUEngHK) {
+            Ok(hk) => if hk.vip_dist_input.volt < 13500 {
+                warn!("Battery low");
+                true
+            } else {
+                false
+            },
+            Err(e) => {
+                error!("Error: {:?}", e);
+                false
+            }
+        };
+        if time_remaining < SHUTDOWN_ALLOWANCE || batt_low {
+            break;            
+        }
+    }
+
+    match SpiralBlue::shutdown(time_remaining.as_secs() as u16) {
+        Ok(()) => {
+            info!("Shutdown acknowledged");
+        }
+        Err(e) => {
+            error!("Error: {:?}", e);
+        }
     }
 
     // give payload time to shutdown
-    thread::sleep(SHUTDOWN_ALLOWANCE)
+    thread::sleep(SHUTDOWN_ALLOWANCE);
+    Ok(())
+}
 
-    // TODO: power off payload (not implemented by ws yet)
+fn main() -> Result<()> {
+    
+    // TODO: power on payload (not implemented by ws yet)    
+    let mut power_3v3 = gpio::sysfs::SysFsGpioOutput::open(115).unwrap();
+    power_3v3.set_value(1).unwrap();
+
+    let app = App::new(app_logic, Some(5), "./spero-service").run()?;
+
+    power_3v3.set_value(0).unwrap();
+    Ok(())
 }
