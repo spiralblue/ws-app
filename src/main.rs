@@ -67,7 +67,17 @@ fn app_logic() -> Result<()> {
     let mut batt_low = false;
     let mut time_remaining = session_duration - session_start_time.elapsed();
     loop {
-        thread::sleep(Duration::from_secs(1));
+        match SpiralBlue::ftp() {
+            Ok(()) => break,
+            Err(e) => {
+                if std::io::Error::from(e.clone()).kind() == std::io::ErrorKind::TimedOut {
+                    continue;
+                } else {
+                    error!("Error: {:?}", e);
+                    break;
+                }
+            }
+        }
         time_remaining = session_duration - session_start_time.elapsed();
         batt_low = match Eps::piu_hk(PIUHkSel::PIUEngHK) {
             Ok(hk) => if hk.vip_dist_input.volt < 13500 {
