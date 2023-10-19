@@ -18,7 +18,7 @@ use isis_eps_api::PIUHkSel;
 const SHUTDOWN_ALLOWANCE: Duration = Duration::from_secs(45);
 
 app_macro! {
-    spiral_blue:SpiralBlue{ 
+    spiral_blue_service:SpiralBlue{ 
         mutation: Initialised => fn initialised(&self) -> Result<()>;
         mutation: Time => fn time(&self) -> Result<()>;
         mutation: StartupCommand => fn startup_command(&self, cmd: Vec<u8>) -> Result<()>;
@@ -111,12 +111,13 @@ fn app_logic() -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    
+    let _ = Logger::init();
     // TODO: power on payload (not implemented by ws yet)    
-    let mut power_3v3 = gpio::sysfs::SysFsGpioOutput::open(115).unwrap();
+    let mut power_3v3 = gpio::sysfs::SysFsGpioOutput::open(117).unwrap();
     power_3v3.set_value(1).unwrap();
+    thread::sleep(Duration::from_secs(5));
 
-    let app = App::new(app_logic, Some(5), "./spero-service").run()?;
+    let app = App::new(app_logic, Some(5), "./spiral-blue-service").run()?;
 
     power_3v3.set_value(0).unwrap();
     Ok(())
