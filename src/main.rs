@@ -15,7 +15,9 @@ use std::thread;
 use std::time::Duration;
 
 fn main() {
-    let startup_command = env::args().nth(1).unwrap_or("Upsbtest02.json".to_string());
+    let file_path = std::env::args().nth(1).unwrap_or_else(|| "./sbtest02.json".to_string());
+    let startup_command = std::fs::read_to_string(file_path)
+        .unwrap_or_else(|_| "Upsbtest02.json".to_string());
     // let _ = Logger::init();
     CombinedLogger::init(vec![
         TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed, ColorChoice::Auto)
